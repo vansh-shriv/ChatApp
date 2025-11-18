@@ -1,41 +1,62 @@
+using ChatApp.Api.Data;
+using ChatApp.Api.Hubs;
+using ChatApp.Api.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// Services
+builder.Services.AddControllers();
+builder.Services.AddSignalR();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(); // simplified - avoid Microsoft.OpenApi.Models reference
+
+// DbContext (expects a "DefaultConnection" in configuration)
+builder.Services.AddDbContext<AppDbContext>(opts =>
+    opts.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection") ?? 
+        "Server=(localdb)\\mssqllocaldb;Database=ChatAppDb;Trusted_Connection=True;"));
+
+// Auth service
+builder.Services.AddScoped<IAuthService, AuthService>();
+
+// JWT Authentication
+var key = builder.Configuration["Jwt:Key"] ?? "please_change_this_key";
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.RequireHttpsMetadata = false;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = !string.IsNullOrEmpty(builder.Configuration["Jwt:Issuer"]),
+            ValidateAudience = !string.IsNullOrEmpty(builder.Configuration["Jwt:Audience"]),
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"],
+            ValidAudience = builder.Configuration["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key))
+        };
+    });
+
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Middleware
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
 
 app.UseHttpsRedirection();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
+app.UseAuthentication();
+app.UseAuthorization();
 
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
+app.MapControllers();
+app.MapHub<ChatHub>("/hubs/chat");
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
