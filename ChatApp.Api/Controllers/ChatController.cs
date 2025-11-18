@@ -10,21 +10,26 @@ namespace ChatApp.Api.Controllers;
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
-
 public class ChatController : ControllerBase
 {
     private readonly AppDbContext _db;
     public ChatController(AppDbContext db) { _db = db; }
 
-    private Guid UserId => Guid.Parse(
-        User.FindFirstValue(ClaimTypes.NameIdentifier)
-    );
+    // get the authenticated user id from the ClaimsPrincipal per-request
+    private Guid GetUserId()
+    {
+        var id = User?.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrEmpty(id) || !Guid.TryParse(id, out var guid))
+            throw new InvalidOperationException("Authenticated user id not found.");
+        return guid;
+    }
 
     [HttpPost("create")]
     public async Task<IActionResult> CreateChat(CreateChatDto dto)
     {
         var chat = new Chat
         {
+            Id = Guid.NewGuid(),
             Name = dto.Name,
             IsGroup = dto.IsGroup
         };
@@ -42,7 +47,7 @@ public class ChatController : ControllerBase
 
         _db.ChatMembers.Add(new ChatMember{
             ChatId = chat.Id,
-            UserId = UserId
+            UserId = GetUserId()
         });
 
         await _db.SaveChangesAsync();
@@ -52,8 +57,9 @@ public class ChatController : ControllerBase
     [HttpGet("my")]
     public async Task<IActionResult> GetMyChats()
     {
+        var userId = GetUserId();
         var chats = await _db.ChatMembers
-            .Where(cm => cm.UserId == UserId)
+            .Where(cm => cm.UserId == userId)
             .Select(cm => cm.Chat)
             .ToListAsync();
 
@@ -62,4 +68,3 @@ public class ChatController : ControllerBase
 }
 
 public record CreateChatDto(string Name, bool IsGroup, List<Guid> Members);
-
